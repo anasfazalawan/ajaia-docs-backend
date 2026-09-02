@@ -161,12 +161,33 @@ const server = Server.configure({
     lastSnapshotAt.set(data.documentName, Date.now());
     const document = await prisma.document.findUnique({
       where: { id: data.documentName },
-      select: { ydoc: true },
+      select: { ydoc: true, content: true },
     });
 
-    if (document?.ydoc) {
+    if (document?.ydoc && document.ydoc.length > 0) {
       // Rehydrate the in-memory Y.Doc from the stored Uint8Array
       return new Uint8Array(document.ydoc);
+    }
+
+    // Fallback: If document was imported without ydoc, populate initial Y.Doc
+    if (document?.content && document.content.trim()) {
+      try {
+        const doc = new Y.Doc();
+        const fragment = doc.getXmlFragment('default');
+        const text = document.content.startsWith('{')
+          ? (JSON.parse(document.content)?.content?.map((n: any) => n.content?.[0]?.text ?? '').filter(Boolean).join('\n') || document.content)
+          : document.content;
+
+        for (const line of text.split(/\r?\n/)) {
+          if (!line.trim()) continue;
+          const p = new Y.XmlElement('paragraph');
+          p.push([new Y.XmlText(line)]);
+          fragment.push([p]);
+        }
+        return Y.encodeStateAsUpdate(doc);
+      } catch {
+        // ignore
+      }
     }
 
     // Document is brand new — return null to start an empty Y.Doc.

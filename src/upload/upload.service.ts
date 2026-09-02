@@ -44,6 +44,41 @@ function markdownToTiptapJson(raw: string, fallbackTitle: string) {
   return { type: 'doc', content };
 }
 
+import * as Y from 'yjs';
+
+function createYDocFromMarkdown(raw: string, fallbackTitle: string): Buffer {
+  const doc = new Y.Doc();
+  const fragment = doc.getXmlFragment('default');
+  const lines = raw.split(/\r?\n/);
+
+  for (const line of lines) {
+    if (line.trim() === '') continue;
+
+    const headingMatch = line.match(/^(#{1,3})\s+(.*)/);
+    if (headingMatch) {
+      const headingNode = new Y.XmlElement('heading');
+      headingNode.setAttribute('level', String(headingMatch[1].length));
+      const textNode = new Y.XmlText(headingMatch[2]);
+      headingNode.push([textNode]);
+      fragment.push([headingNode]);
+      continue;
+    }
+
+    const pNode = new Y.XmlElement('paragraph');
+    const textNode = new Y.XmlText(line);
+    pNode.push([textNode]);
+    fragment.push([pNode]);
+  }
+
+  if (fragment.length === 0) {
+    const pNode = new Y.XmlElement('paragraph');
+    pNode.push([new Y.XmlText(fallbackTitle)]);
+    fragment.push([pNode]);
+  }
+
+  return Buffer.from(Y.encodeStateAsUpdate(doc));
+}
+
 @Injectable()
 export class UploadService {
   constructor(private prisma: PrismaService) {}
@@ -64,8 +99,16 @@ export class UploadService {
     const text = file.buffer.toString('utf-8');
     const title = file.originalname.replace(/\.(txt|md)$/i, '') || 'Imported document';
     const content = JSON.stringify(markdownToTiptapJson(text, title));
+    const ydoc = createYDocFromMarkdown(text, title);
 
-    return this.prisma.document.create({ data: { title, content, ownerId: userId } });
+    return this.prisma.document.create({
+      data: {
+        title,
+        content,
+        ydoc,
+        ownerId: userId,
+      },
+    });
   }
 
   async attachToDocument(userId: string, documentId: string, file: Express.Multer.File, savedPath: string) {
