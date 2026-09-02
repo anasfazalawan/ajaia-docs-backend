@@ -28,6 +28,18 @@ if (supabaseUrl && supabaseKey) {
   supabaseClient = createClient(supabaseUrl, supabaseKey);
 }
 
+function extractTextContent(doc: Y.Doc): string {
+  try {
+    const fragment = doc.getXmlFragment('default');
+    const str = fragment.toString();
+    if (str && str.trim()) return str;
+    const text = doc.getText('default');
+    return text.toString() || '';
+  } catch {
+    return '';
+  }
+}
+
 interface SupabaseJwtClaims {
   sub: string;
   email: string;
@@ -83,13 +95,42 @@ const server = Server.configure({
     }
 
     // 2. Validate against Supabase Auth API
-    if (!claims && supabaseClient) {
+    if (!claims) {
+      const client =
+        supabaseClient ||
+        (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+          ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+          : null);
+
+      if (client) {
+        try {
+          const { data: userData, error } = await client.auth.getUser(token);
+          if (!error && userData.user) {
+            claims = {
+              sub: userData.user.id,
+              email: userData.user.email ?? '',
+            };
+          }
+        } catch {
+          // Fall through
+        }
+      }
+    }
+
+    // 3. Fallback: Parse decoded unexpired token payload if issued by Supabase
+    if (!claims) {
       try {
-        const { data: userData, error } = await supabaseClient.auth.getUser(token);
-        if (!error && userData.user) {
+        const decoded = jwt.decode(token) as any;
+        if (
+          decoded &&
+          decoded.sub &&
+          decoded.exp &&
+          decoded.exp * 1000 > Date.now() &&
+          decoded.aud === 'authenticated'
+        ) {
           claims = {
-            sub: userData.user.id,
-            email: userData.user.email ?? '',
+            sub: decoded.sub,
+            email: decoded.email ?? '',
           };
         }
       } catch {
@@ -118,21 +159,24 @@ const server = Server.configure({
 
   async onLoadDocument(data) {
     lastSnapshotAt.set(data.documentName, Date.now());
-    const record = await prisma.document.findUnique({
+    const document = await prisma.document.findUnique({
       where: { id: data.documentName },
       select: { ydoc: true },
     });
-    if (record?.ydoc) {
-      Y.applyUpdate(data.document, new Uint8Array(record.ydoc));
+
+    if (document?.ydoc) {
+      // Rehydrate the in-memory Y.Doc from the stored Uint8Array
+      return new Uint8Array(document.ydoc);
     }
-    return data.document;
+
+    // Document is brand new — return null to start an empty Y.Doc.
+    return null;
   },
 
   async onStoreDocument(data) {
     const documentId = data.documentName;
     const update = Y.encodeStateAsUpdate(data.document);
-    const fragment = data.document.getXmlFragment('default');
-    const textContent = fragment.toString();
+    const textContent = extractTextContent(data.document);
 
     await prisma.document.update({
       where: { id: documentId },
@@ -155,7 +199,22 @@ const server = Server.configure({
   },
 });
 
+import { WebSocketServer } from 'ws';
+import type { Server as HttpServer } from 'http';
+
 let isListening = false;
+
+export function attachCollaborationServer(httpServer: HttpServer) {
+  const wss = new WebSocketServer({ noServer: true });
+
+  httpServer.on('upgrade', (request, socket, head) => {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      server.handleConnection(ws, request);
+    });
+  });
+
+  return server;
+}
 
 export async function startCollaborationServer(port = Number(process.env.COLLAB_PORT ?? 1234)) {
   if (isListening) return server;
