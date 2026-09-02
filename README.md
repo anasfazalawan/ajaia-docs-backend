@@ -2,6 +2,13 @@
 
 An AI-native collaborative document editor backend powered by **NestJS**, **Prisma ORM**, **Supabase PostgreSQL**, and **Yjs / Hocuspocus WebSockets**.
 
+**Candidate:** Muhammad Anas Fazal ([anasfazalawan@gmail.com](mailto:anasfazalawan@gmail.com))  
+**Live Backend API:** [https://ajaia-docs-backend-ioxf.onrender.com/api](https://ajaia-docs-backend-ioxf.onrender.com/api)  
+**Live Frontend App:** [https://ajaia-docs-frontend-five.vercel.app](https://ajaia-docs-frontend-five.vercel.app)  
+**Backend Repository:** [https://github.com/anasfazalawan/ajaia-docs-backend](https://github.com/anasfazalawan/ajaia-docs-backend)  
+**Frontend Repository:** [https://github.com/anasfazalawan/ajaia-docs-frontend](https://github.com/anasfazalawan/ajaia-docs-frontend)  
+**Architecture & AI Workflow Gist:** [https://gist.github.com/anasfazalawan/1588dd8504276740e30d8eb5624dfc3e](https://gist.github.com/anasfazalawan/1588dd8504276740e30d8eb5624dfc3e)  
+
 ---
 
 ## Architecture & Features

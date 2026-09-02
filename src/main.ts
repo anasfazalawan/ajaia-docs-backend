@@ -3,7 +3,10 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
-import { startCollaborationServer } from './collaboration/collaboration-server';
+import {
+  attachCollaborationServer,
+  startCollaborationServer,
+} from './collaboration/collaboration-server';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -23,7 +26,15 @@ async function bootstrap() {
   app.enableCors({
     origin: (requestOrigin, callback) => {
       if (!requestOrigin) return callback(null, true); // non-browser clients (curl, health checks)
-      if (allowedOrigins.includes(requestOrigin)) return callback(null, true);
+      const cleanOrigin = requestOrigin.replace(/\/+$/, '');
+      if (
+        allowedOrigins.length === 0 ||
+        allowedOrigins.includes(cleanOrigin) ||
+        cleanOrigin.endsWith('.vercel.app') ||
+        cleanOrigin.includes('localhost')
+      ) {
+        return callback(null, true);
+      }
       logger.warn(`Blocked CORS request from origin: ${requestOrigin}`);
       return callback(new Error('Not allowed by CORS'), false);
     },
@@ -38,18 +49,30 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
   app.setGlobalPrefix('api');
 
+  // Attach WebSocket collaboration server directly to the underlying HTTP server
+  const httpServer = app.getHttpServer();
+  attachCollaborationServer(httpServer);
+
   const port = process.env.PORT ?? 4000;
   await app.listen(port);
-  logger.log(`Backend listening on http://localhost:${port}/api`);
-  logger.log(`Allowed CORS origins: ${allowedOrigins.join(', ')}`);
 
-  // Start real-time collaboration WebSocket server
+  const baseUrl = process.env.RENDER_EXTERNAL_URL
+    ? `${process.env.RENDER_EXTERNAL_URL}/api`
+    : `http://localhost:${port}/api`;
+
+  logger.log(`Backend listening on ${baseUrl}`);
+  logger.log(`Allowed CORS origins: ${allowedOrigins.length ? allowedOrigins.join(', ') : 'All Vercel apps & localhost'}`);
+  logger.log(`WebSocket collaboration server mounted on HTTP upgrade on same port`);
+
+  // Secondary standalone port for local testing if explicitly configured
   const collabPort = Number(process.env.COLLAB_PORT ?? 1234);
-  try {
-    await startCollaborationServer(collabPort);
-    logger.log(`Real-time collaboration WebSocket server listening on ws://localhost:${collabPort}`);
-  } catch (err: unknown) {
-    logger.error(`Failed to start collaboration WebSocket server on port ${collabPort}:`, err);
+  if (collabPort && collabPort !== Number(port) && process.env.NODE_ENV !== 'production') {
+    try {
+      await startCollaborationServer(collabPort);
+      logger.log(`Standalone local collaboration WebSocket server listening on ws://localhost:${collabPort}`);
+    } catch {
+      // ignore
+    }
   }
 }
 bootstrap();
