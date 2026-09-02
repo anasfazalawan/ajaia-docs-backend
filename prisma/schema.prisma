@@ -1,0 +1,76 @@
+// Prisma schema for the Ajaia collaborative document editor.
+// Storage: Postgres via Supabase. DATABASE_URL is the pooled (pgbouncer)
+// connection used by the running app; DIRECT_URL is the direct connection
+// used only for migrations.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id             String   @id @default(uuid())
+  supabaseUserId String   @unique // Supabase auth.users.id — source of truth for identity
+  email          String   @unique
+  name           String
+  avatarUrl      String?
+  createdAt      DateTime @default(now())
+
+  ownedDocuments Document[]      @relation("OwnedDocuments")
+  sharedWithMe   DocumentShare[] @relation("SharedWithUser")
+}
+
+model Document {
+  id        String   @id @default(uuid())
+  title     String   @default("Untitled document")
+  content   String   @default("") // Tiptap JSON snapshot — used for import/export and dashboard previews
+  ydoc      Bytes? // Yjs binary state — authoritative source for collaborative editing
+  ownerId   String
+  owner     User     @relation("OwnedDocuments", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shares      DocumentShare[]
+  attachments Attachment[]
+  versions    DocumentVersion[]
+}
+
+model DocumentShare {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation("SharedWithUser", fields: [userId], references: [id], onDelete: Cascade)
+  role       String   @default("editor") // "viewer" | "editor" — enforced server-side in DocumentsService
+  createdAt  DateTime @default(now())
+
+  @@unique([documentId, userId])
+}
+
+model Attachment {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  filename   String
+  mimetype   String
+  path       String
+  createdAt  DateTime @default(now())
+}
+
+// Periodic snapshots of document content, written on a timer by the
+// collaboration server rather than on every keystroke — supports simple
+// version history / restore.
+model DocumentVersion {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  content    String // Tiptap JSON snapshot at this point in time
+  createdAt  DateTime @default(now())
+
+  @@index([documentId, createdAt])
+}
